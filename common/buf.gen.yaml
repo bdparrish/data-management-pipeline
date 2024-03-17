@@ -1,0 +1,11 @@
+version: v1
+managed:
+  enabled: true
+  go_package_prefix:
+    default: .
+    except:
+      - buf.build/bufbuild/protovalidate
+plugins:
+  - name: go
+    out: pkg/models
+    opt: paths=source_relative

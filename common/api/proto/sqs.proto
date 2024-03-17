@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package arrakis.aws;
+
+option go_package = "pkg/models";
+
+message SqsMessageBody {
+  repeated SqsMessageBodyRecord records = 1;
+}
+
+message SqsMessageBodyRecord {
+  string eventVersion = 1;
+  string eventSource = 2;
+  string awsRegion = 3;
+  string eventTime = 4;
+  string eventName = 5;
+  UserIdentity userIdentity = 6;
+  S3 s3 = 9;
+}
+
+message UserIdentity {
+  string principalId = 1;
+}
+
+message S3 {
+  string s3SchemaVersion = 1;
+  string configurationId = 2;
+  S3Bucket bucket = 3;
+  S3Object object = 4;
+}
+
+message S3Bucket {
+  string name = 1;
+  UserIdentity ownerIdentity = 2;
+  string arn = 3;
+}
+
+message S3Object {
+  string key = 1;
+  string sequencer = 2;
+  string versionId = 3;
+  int64 size = 4;
+  string eTag = 5;
+}

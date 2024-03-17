@@ -1,0 +1,167 @@
+services:
+
+  dnsmasq:
+    image: strm/dnsmasq
+    container_name: arrakis-dns
+    restart: on-failure
+    volumes:
+      - ../misc/mounts/dnsmasq/dns.conf:/etc/dnsmasq.conf
+    ports:
+      - "53/udp"
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - 'if [ -z "$(netstat -nltu |grep \:53)" ]; then exit 1;else exit 0;fi'
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    networks:
+      default:
+        ipv4_address: 172.16.0.253
+
+  localstack:
+    image: localstack/localstack:latest
+    container_name: arrakis-localstack
+    restart: on-failure
+    ports:
+      - "127.0.0.1:${ARRAKIS_STACK_LOCALSTACK_PORT}:${ARRAKIS_STACK_LOCALSTACK_PORT}"
+    volumes:
+      - ../misc/mounts/localstack/init:/etc/localstack/init
+    env_file:
+      - ../misc/.env.aws
+      - ../misc/.env.arrakis
+    environment:
+      - "SERVICES=s3,sqs,sts"
+      - "DEBUG=1"
+      - "DISABLE_EVENTS=1"
+      - "DISABLE_CORS_CHECKS=1"
+      - "LOCALSTACK_HOST=localhost"
+      - "HOSTNAME=localhost"
+      - "PROVIDER_OVERRIDE_S3=v3"
+    depends_on:
+      dnsmasq:
+        condition: service_healthy
+    networks:
+      default:
+        ipv4_address: 172.16.0.10 # needed S3 access within network via DNS
+    dns:
+      - 172.16.0.253
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - 'curl -s localhost:4566/_localstack/init | grep -q -F ''"stage": "READY", "name": "setup.sh", "state": "SUCCESSFUL"'''
+      interval: 2s
+      timeout: 2s
+      retries: 50
+
+  db:
+    image: postgres:16.0
+    container_name: arrakis-db
+    restart: on-failure
+    env_file:
+      - ../misc/.env.db
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ../misc/mounts/db:/docker-entrypoint-initdb.d
+      - arrakis-db:/var/lib/postgresql/data
+    depends_on:
+      dnsmasq:
+        condition: service_healthy
+    dns:
+      - 172.16.0.253
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "pg_isready -U postgres"
+      interval: 2s
+      timeout: 2s
+      retries: 50
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ARRAKIS_STACK_ES_VERSION}
+    container_name: "${ARRAKIS_STACK_ES_CURL_HOST}"
+    environment:
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - "bootstrap.memory_lock=true"
+      - "discovery.type=single-node"
+      - "xpack.security.enabled=false"
+      - "xpack.security.enrollment.enabled=false"
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - arrakis-es-data:/usr/share/elasticsearch/data
+    depends_on:
+      dnsmasq:
+        condition: service_healthy
+    dns:
+      - 172.16.0.253
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - 'curl -s "http://localhost:9200/_cluster/health?wait_for_status=green"'
+      interval: 10s
+      timeout: 15s
+      retries: 50
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ARRAKIS_STACK_ES_VERSION}
+    container_name: "arrakis-kibana"
+    environment:
+      - "SERVERNAME=arrakis-kibana"
+      - "ELASTICSEARCH_HOSTS=${ES_HOSTS}"
+      - "XPACK_APM_SERVICEMAPENABLED=true"
+      - "XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=d1a66dfd-c4d3-4a0a-8290-2abcb83ab3aa"
+      - "LOGGING_ROOT_LEVEL=error"
+    ports:
+      - "127.0.0.1:5601:5601"
+    volumes:
+      - arrakis-kibana-data:/usr/share/kibana/data
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    dns:
+      - 172.16.0.253
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "curl -s --fail -o /dev/null http://localhost:5601/"
+      interval: 15s
+      timeout: 10s
+      retries: 30
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: arrakis-mailhog
+    depends_on:
+      dnsmasq:
+        condition: service_healthy
+    dns:
+      - 172.16.0.253
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+
+volumes:
+  arrakis-db:
+  arrakis-es-data:
+  arrakis-kibana-data:
+
+
+networks:
+  default:
+    name: arrakis_network
+    ipam:
+      config:
+        - subnet: 172.16.0.0/24
+          gateway: 172.16.0.1

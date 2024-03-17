@@ -1,0 +1,193 @@
+syntax = "proto3";
+
+package arrakis.models;
+
+import "buf/validate/validate.proto";
+
+option go_package = "pkg/models";
+
+enum QueryType {
+  UNSPECIFIED = 0;
+  CREATE_DATE = 1;
+  SUBMIT_DATE = 2;
+  CATEGORY = 3;
+  DATASET_LABEL = 4;
+  OBJECT_LABEL = 5;
+  CONTENT_TYPE = 6;
+  HASH = 7;
+}
+
+message UserSummary {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  optional string userDn = 2;
+  optional string name = 3;
+  optional string email = 4;
+}
+
+message User {
+  string id = 1;
+  string name = 3 [(buf.validate.field).required = true];
+  string email = 4 [(buf.validate.field).string.pattern = "^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$"];
+  string apiKey = 5;
+  int64 activeDate = 6;
+  repeated GroupSummary managerGroups = 7;
+  repeated GroupSummary memberGroups = 8;
+}
+
+message GroupSummary {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  optional string name = 2;
+}
+
+message Group {
+  option (buf.validate.message).cel = {
+    id: "manager_exists",
+    message: "a group must have at least one manager",
+    expression: "size(this.managers) > 0"
+  };
+
+  string id = 1;
+  string name = 2 [(buf.validate.field).required = true];
+  repeated UserSummary managers = 3;
+  repeated UserSummary members = 4;
+  repeated DatasetSummary datasets = 5;
+  repeated SubscriptionSummary subscriptions = 6;
+}
+
+message DatasetSummary {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  optional string name = 2;
+  optional string description = 3;
+}
+
+message Dataset {
+  message DatasetAggregate {
+    int32 count = 1;
+    int64 size = 2;
+    uint64 first = 3;
+    uint64 last = 4;
+  }
+
+  string id = 1;
+  string name = 2 [(buf.validate.field).required = true];
+  string description = 3 [(buf.validate.field).required = true];
+  string omniUrl = 4 [(buf.validate.field).string.uri_ref = true];
+  int32 objectTimeToLive = 5 [(buf.validate.field).int32.gte = 0];
+  GroupSummary group = 6 [(buf.validate.field).required = true];
+  repeated UserSummary users = 7;
+  repeated DatasetLabel datasetLabels = 8;
+  repeated ObjectLabel requiredObjectLabels = 9;
+  repeated Category categories = 10;
+  DatasetAggregate aggregates = 11;
+  bool isPublic = 12;
+}
+
+message DatasetLabel {
+  string id = 1;
+  string name = 2 [(buf.validate.field).required = true];
+}
+
+message ObjectLabel {
+  string id = 1;
+  string name = 2 [(buf.validate.field).required = true];
+  string value = 3 [(buf.validate.field).required = true];
+}
+
+message Category {
+  string id = 1;
+  string name = 2 [(buf.validate.field).required = true];
+}
+
+message ObjectMetadata {
+  string id = 1;
+  string name = 2 [(buf.validate.field).required = true];
+  string value = 3 [(buf.validate.field).required = true];
+}
+
+message Object {
+  string id = 1;
+  string name = 2 [(buf.validate.field).required = true];
+  string hash = 3 [(buf.validate.field).required = true];
+  int64 size = 4 [(buf.validate.field).int64.gt = 0];
+  string key = 5 [(buf.validate.field).required = true];
+  repeated ObjectMetadata metadata = 6 [(buf.validate.field).repeated.min_items = 1];
+  int64 createdAt = 7;
+  int64 submittedAt = 8 [(buf.validate.field).int64.gte = 1701388800000];
+  DatasetSummary dataset = 9 [(buf.validate.field).required = true];
+}
+
+message QueryParameter {
+  string id = 1;
+  QueryType queryType = 2;
+  string value = 3 [(buf.validate.field).required = true];
+}
+
+message SubscriptionSummary {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  optional string name = 2;
+  optional string description = 3;
+  bool enabled = 4;
+}
+
+message Subscription {
+  option (buf.validate.message).cel = {
+    id: "parameters_exists",
+    message: "a subscription must have at least a dataset or a query parameter",
+    expression: "size(this.datasets) > 0 || size(this.queryParameters) > 0"
+  };
+
+  string id = 1;
+  string name = 2 [(buf.validate.field).required = true];
+  string description = 3 [(buf.validate.field).required = true];
+  bool enabled = 4;
+  GroupSummary group = 5 [(buf.validate.field).required = true];
+  repeated DatasetSummary datasets = 6;
+  repeated QueryParameter queryParameters = 7;
+}
+
+message GetMessagesRequest {
+  string subscriptionId = 1 [(buf.validate.field).string.uuid = true];
+  int32 maxMessages = 2 [(buf.validate.field).int32.gt = 0,
+                         (buf.validate.field).int32.lte = 10];
+}
+
+message GetMessagesResponse {
+  string id = 1;
+  repeated GetMessageResponse messages = 2;
+  repeated string errors = 3;
+}
+
+message GetMessageResponse {
+  string url = 1;
+  string groupId = 2;
+  string groupName = 3;
+  string datasetId = 4;
+  string datasetName = 5;
+  repeated ObjectMetadata metadata = 6;
+  string key = 7;
+}
+
+message ReplayRequest {
+  option (buf.validate.message).cel = {
+    id: "replay_request_valid_time_range",
+    message: "invalid time range - 'objectsCreatedFrom' must be less than 'ObjectsCreatedTill'",
+    expression: "!has(this.objectsCreatedFrom) || !has(this.objectsCreatedTill) || (this.objectsCreatedTill > this.objectsCreatedFrom)"
+  };
+
+  repeated string targetSubscriptionIds = 1 [(buf.validate.field).repeated.min_items = 1,
+                                             (buf.validate.field).repeated.unique = true,
+                                             (buf.validate.field).repeated.items = {string:{uuid:true}}];
+  optional int64 objectsCreatedFrom = 2 [(buf.validate.field).int64.gte = 1701388800000];
+  optional int64 objectsCreatedTill = 3 [(buf.validate.field).int64.gte = 1701388800000];
+  repeated string objectIds = 4 [(buf.validate.field).repeated.unique = true,
+                                 (buf.validate.field).repeated.items = {string:{uuid:true}}];
+}
+
+message ApiError {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  string message = 2 [(buf.validate.field).required = true];
+}
+
+message ApiErrorResponse {
+  ApiError error = 1 [(buf.validate.field).required = true];
+}
